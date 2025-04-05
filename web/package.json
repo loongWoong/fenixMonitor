@@ -1,0 +1,13 @@
+{
+  "name": "monitor-s",
+  "version": "1.0.0",
+  "description": "系统监控面板",
+  "scripts": {
+    "start": "http-server static -p 3000",
+    "dev": "lite-server --baseDir=static"
+  },
+  "dependencies": {
+    "http-server": "^14.1.1",
+    "lite-server": "^2.6.1"
+  }
+}

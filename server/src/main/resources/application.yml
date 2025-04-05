@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: jdbc:sqlite:data/monitor.db
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.monitor.server: INFO
+
+mybatis-plus:
+  type-aliases-package: com.monitor.server.model
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto

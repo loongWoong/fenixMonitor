@@ -1,0 +1,28 @@
+# IDE配置文件
+.idea/
+
+# 前端依赖
+node_modules/
+
+# 后端构建文件
+target/
+
+# 系统文件
+.DS_Store
+
+# 日志文件
+*.log
+
+# 环境文件
+.env
+
+# 包锁文件
+package-lock.json
+
+#数据库记录
+#monitor.db
+
+# 编译文件
+*.class
+*.pyc
+__pycache__/

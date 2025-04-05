@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统监控面板</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stomp-websocket@2.3.4-next/lib/stomp.min.js"></script>
+</head>
+<body class="bg-light">
+    <div class="container-fluid py-4">
+        <h1 class="text-center mb-4">系统监控面板</h1>
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">节点列表</h5>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <div id="nodeList" class="d-flex flex-wrap gap-2"></div>
+                            <button id="clearCacheBtn" class="btn btn-warning">清空数据缓存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">CPU使用率</h5>
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">内存使用率</h5>
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">网络流量</h5>
+                        <canvas id="networkChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">进程信息</h5>
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>PID</th>
+                                        <th>名称</th>
+                                        <th>CPU使用率</th>
+                                        <th>内存使用率</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="processTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 图表配置
+        const chartOptions = {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100
+                }
+            }
+        };
+
+        // 初始化图表
+        const cpuChart = new Chart(document.getElementById('cpuChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'CPU使用率 (%)',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1
+                }]
+            },
+            options: chartOptions
+        });
+
+        const memoryChart = new Chart(document.getElementById('memoryChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '内存使用率 (%)',
+                    data: [],
+                    borderColor: 'rgb(255, 99, 132)',
+                    tension: 0.1
+                }]
+            },
+            options: chartOptions
+        });
+
+        const networkChart = new Chart(document.getElementById('networkChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '发送流量(MB)',
+                    data: [],
+                    borderColor: 'rgb(54, 162, 235)',
+                    tension: 0.1
+                }, {
+                    label: '接收流量(MB)',
+                    data: [],
+                    borderColor: 'rgb(255, 159, 64)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // 存储活跃节点和数据缓存
+        const activeNodes = new Set();
+        let currentNode = null;
+        const nodeDataCache = new Map(); // 用于存储每个节点的历史数据
+        const MAX_CACHE_SIZE = 10; // 每个节点最多缓存50条数据
+
+        // WebSocket连接
+        const socket = new SockJS('http://localhost:8080/ws');
+        const stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function(frame) {
+            console.log('Connected: ' + frame);
+            // 订阅所有节点的数据
+            stompClient.subscribe('/topic/monitor', function(message) {
+                const data = JSON.parse(message.body);
+                const nodeId = data.nodeIdentifier;
+                
+                // 更新节点列表
+                if (!activeNodes.has(nodeId)) {
+                    activeNodes.add(nodeId);
+                    nodeDataCache.set(nodeId, []); // 初始化节点的数据缓存
+                    updateNodeList();
+                }
+
+                // 更新数据缓存
+                const nodeCache = nodeDataCache.get(nodeId);
+                nodeCache.push(data);
+                if (nodeCache.length > MAX_CACHE_SIZE) {
+                    nodeCache.shift(); // 移除最旧的数据
+                }
+
+                // 如果是当前选中的节点，更新图表
+                if (currentNode === null || currentNode === nodeId) {
+                    currentNode = nodeId;
+                    updateCharts(data);
+                    updateProcessTable(data.processes);
+                }
+            });
+        });
+
+        function updateNodeList() {
+            const nodeListDiv = document.getElementById('nodeList');
+            nodeListDiv.innerHTML = '';
+            
+            activeNodes.forEach(nodeId => {
+                const btn = document.createElement('button');
+                btn.className = `btn ${currentNode === nodeId ? 'btn-primary' : 'btn-outline-primary'}`;
+                btn.textContent = `节点 ${nodeId}`;
+                btn.onclick = () => {
+                    currentNode = nodeId;
+                    updateNodeList(); // 更新按钮样式
+                    // 从缓存加载节点数据
+                    const nodeCache = nodeDataCache.get(nodeId);
+                    if (nodeCache && nodeCache.length > 0) {
+                        clearChartData(); // 清空当前图表
+                        // 重新渲染所有缓存的数据
+                        nodeCache.forEach(data => {
+                            updateCharts(data);
+                        });
+                        // 更新进程表格显示最新数据
+                        updateProcessTable(nodeCache[nodeCache.length - 1].processes);
+                    }
+                };
+                nodeListDiv.appendChild(btn);
+            });
+        }
+    
+        function clearChartData() {
+            // 清空CPU图表数据
+            cpuChart.data.labels = [];
+            cpuChart.data.datasets[0].data = [];
+            cpuChart.update();
+    
+            // 清空内存图表数据
+            memoryChart.data.labels = [];
+            memoryChart.data.datasets[0].data = [];
+            memoryChart.update();
+    
+            // 清空网络图表数据
+            networkChart.data.labels = [];
+            networkChart.data.datasets[0].data = [];
+            networkChart.data.datasets[1].data = [];
+            networkChart.update();
+    
+            // 清空进程表格
+            document.getElementById('processTable').innerHTML = '';
+        }
+
+        function updateCharts(data) {
+            const timestamp = new Date(data.timestamp * 1000).toLocaleTimeString();
+
+            // 更新CPU图表
+            cpuChart.data.labels.push(timestamp);
+            cpuChart.data.datasets[0].data.push(data.cpu);
+            if (cpuChart.data.labels.length > 10) {
+                cpuChart.data.labels.shift();
+                cpuChart.data.datasets[0].data.shift();
+            }
+            cpuChart.update();
+
+            // 更新内存图表
+            memoryChart.data.labels.push(timestamp);
+            memoryChart.data.datasets[0].data.push(data.memoryPercent);
+            if (memoryChart.data.labels.length > 10) {
+                memoryChart.data.labels.shift();
+                memoryChart.data.datasets[0].data.shift();
+            }
+            memoryChart.update();
+
+            // 更新网络图表
+            networkChart.data.labels.push(timestamp);
+            networkChart.data.datasets[0].data.push(data.networkBytesSent / (1024 * 1024));
+            networkChart.data.datasets[1].data.push(data.networkBytesRecv / (1024 * 1024));
+            if (networkChart.data.labels.length > 10) {
+                networkChart.data.labels.shift();
+                networkChart.data.datasets[0].data.shift();
+                networkChart.data.datasets[1].data.shift();
+            }
+            networkChart.update();
+        }
+
+        function updateProcessTable(processes) {
+            console.log('Received processes:', processes);
+            const tableBody = document.getElementById('processTable');
+            tableBody.innerHTML = '';
+            processes.forEach(process => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${process.pid}</td>
+                    <td>${process.name}</td>
+                    <td>${process.cpu_percent !== null ? process.cpu_percent.toFixed(1) : '0.0'}%</td>
+                    <td>${process.memory_percent !== null ? process.memory_percent.toFixed(1) : '0.0'}%</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        // 添加清空缓存功能
+        function clearCache() {
+            // 清空所有节点的数据缓存
+            nodeDataCache.forEach((cache, nodeId) => {
+                // 保留最新的一条数据
+                const latestData = cache[cache.length - 1];
+                nodeDataCache.set(nodeId, latestData ? [latestData] : []);
+            });
+            
+            // 如果有选中的节点，更新其显示
+            if (currentNode && nodeDataCache.has(currentNode)) {
+                const nodeCache = nodeDataCache.get(currentNode);
+                clearChartData();
+                if (nodeCache.length > 0) {
+                    updateCharts(nodeCache[0]);
+                    updateProcessTable(nodeCache[0].processes);
+                }
+            }
+        }
+
+        // 添加清空缓存按钮事件监听
+        document.getElementById('clearCacheBtn').addEventListener('click', clearCache);
+    </script>
+</body>
+</html>
